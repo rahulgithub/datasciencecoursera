@@ -1,0 +1,136 @@
+---
+title: "Practical Machine Learning - Course Project"
+output: html_document
+---
+Objective : Analyze the data coming from accelerometers present in the activity bands (belt, forearm, arm, and dumbell) of the 6 participants in the study and predict the manner in which they did the exercise. (They were asked to perform barbell lifts correctly and incorrectly in 5 different ways)
+
+Dataset : The data for this project came from the source http://groupware.les.inf.puc-rio.br/har
+
+Training dataset : 19622 rows * 160 cols (including response column ‘classe’)
+
+Holdout sample: 20 records * 160 cols (response column has been replaced by a dummy/surrogate key)
+
+Load the Training & Test/Holdout data files and do a basic inspection of the fields, data types, values etc.
+```{r}
+setwd("/home/vulcan/R/Coursera/PracticalMachineLearning-JohnsHopkins")
+sensorTrain <- read.csv("pml-training.csv", header = TRUE, sep = ",")
+sensorTest <- read.csv("pml-testing.csv", header = TRUE, sep = ",")
+
+head(sensorTrain,10)
+str(sensorTrain)
+nrow(sensorTrain)
+ncol(sensorTrain)
+```
+  
+### Several columns seem to have *NA*,*NULL*, and other invalid values like *‘#DIV/0!’*
+
+Remove all the columns which have NA and NULL in more than 40% of records
+```{r}
+cleanPredSensorTrain <- sensorTrain
+which(as.numeric(colSums(is.na(cleanPredSensorTrain)))/nrow(cleanPredSensorTrain) > .4)
+cleanPredSensorTrain <- cleanPredSensorTrain[,-which(as.numeric(colSums(is.na(cleanPredSensorTrain)))/nrow(cleanPredSensorTrain) > .4)]
+cleanPredSensorTrain <- cleanPredSensorTrain[,-which(colSums(cleanPredSensorTrain == '')/nrow(cleanPredSensorTrain) > .4)]
+str(cleanPredSensorTrain)
+```
+  
+### Split this dataset for model estimation & tuning (80/20)
+```{r}
+library(caret)
+library(AppliedPredictiveModeling)
+set.seed(33833)
+trainIndex <- createDataPartition(cleanPredSensorTrain$classe, p = .80,list=FALSE,times=1)
+cleanTrain <- cleanPredSensorTrain[trainIndex,]
+cleanTest  <- cleanPredSensorTrain[-trainIndex,]
+```
+  
+### Check for predictors with near zero variance. (excluding User Names, Response and time related fields)
+```{r}
+nearZeroVar(cleanTrain[,-c(1,2,3,4,5,60)])
+```
+  
+### Removing User Names, Response,time related fields, and anything that is returned from above (new_window)
+```{r}
+cleanTrain <- cleanTrain[,-c(1,2,3,4,5,6)]
+```
+  
+### Look for Between-Predictor correlations and plot the correlation matrix.
+```{r}
+correlations <- cor(cleanTrain[,-54])
+```
+
+```{r,echo=FALSE}
+library(corrplot)
+corrplot(correlations,order="hclust")
+```
+  
+### Eliminate the predictors which have a between predictor correlation beyond a certain threshold.
+
+```{r}
+highCorr <- findCorrelation(correlations,cutoff = .75)
+highCorr
+length(highCorr)
+cleanTrain <- cleanTrain[,-highCorr]
+names(cleanTrain)
+```
+
+### Model fit 
+  
+1. Random Forest CrossValidation - Setting up for K fold CV. K = 5
+
+```{r}
+#set.seed(33833)
+#train_control <- trainControl(method="cv", number=5)
+#finalM1 <- train(classe ~ ., method = "rf",trControl=train_control, data = cleanTrain,prox = TRUE)
+#save(finalM1,file="finalM1.Rda")
+load("finalM1.Rda")
+finalM1
+confusionMatrix(finalM1)
+ varImp(finalM1, scale = FALSE)
+```
+2. Bootstrap - Resampling
+```{r}
+set.seed(33834)
+finalM2 <- train(classe ~ ., method = "rf", data = cleanTrain,prox = TRUE)
+finalM2
+confusionMatrix(finalM2)
+#save(finalM1,file="finalM2.Rda")
+varImp(finalM2, scale = FALSE)
+```
+
+Almost similar Variable Importance plots for both Bootstrapped & CV 
+
+### Predicting against turning sample cleanTest using finalM1 & finalM2
+
+```{r}
+set.seed(12345)
+predfinalM1 <- predict(finalM1,cleanTest,type="raw")
+cleanTest$predRightM1 <- predfinalM1==cleanTest$classe
+table(predfinalM1,cleanTest$classe)
+
+predfinalM2 <- predict(finalM2,cleanTest,type="raw")
+cleanTest$predRight <- predfinalM2==cleanTest$classe
+table(predfinalM2,cleanTest$classe)
+```
+  
+### Calculating Out Of Sample Estimation error
+
+```{r}
+missClass = function(values, prediction) {
+    sum(prediction != values)/length(values)
+}
+
+# Error Rate with Model predfinalM1
+errRate_M1 = missClass(cleanTest$classe, predfinalM1)
+errRate_M1
+
+# Error Rate with Model predfinalM2
+errRate_M2 = missClass(cleanTest$classe, predfinalM2)
+errRate_M2
+```
+  
+### Predicting against holdout sample
+```{r}
+predfinalML_H <- predict(finalM1,sensorTest,type="raw")
+```
+
+
